@@ -68,7 +68,7 @@ jobs:
           - name: 修复问题
             working-directory: ${{ env.OPENWRT_ROOT_PATH }}
             run: |
-              sed -i 's/^  DEPENDS:= +kmod-crypto-manager +kmod-crypto-pcbc +kmod-crypto-fcrypt$/  DEPENDS:= +kmod-crypto-manager +kmod-crypto-pcbc +kmod-crypto-fcrypt +kmod-udptunnel4 +kmod-udptunnel6/' package/kernel/linux/modules/netsupport.mk #https://github.com/openwrt/openwrt/commit/ecc53240945c95bc77663b79ccae6e2bd046c9c8
+              sed -i 's/^  DEPENDS:= +kmod-crypto-manager +kmod-crypto-pcbc +kmod-crypto-fcrypt$/  DEPENDS:= +kmod-crypto-manager +kmod-crypto-pcbc +kmod-crypto-fcrypt +kmod-udptunnel4 +kmod-udptunnel6/' package/kernel/linux/modules/netsupport.mk
               sed -i 's/^	dnsmasq \\$/	dnsmasq-full \\/g' ./include/target.mk
               sed -i 's/^	b43-fwsquash.py "$(CONFIG_B43_FW_SQUASH_PHYTYPES)" "$(CONFIG_B43_FW_SQUASH_COREREVS)"/	$(TOPDIR)\/tools\/b43-tools\/files\/b43-fwsquash.py "$(CONFIG_B43_FW_SQUASH_PHYTYPES)" "$(CONFIG_B43_FW_SQUASH_COREREVS)"/' ./package/kernel/mac80211/broadcom.mk
     
@@ -101,7 +101,6 @@ jobs:
                 curl -sSL https://raw.githubusercontent.com/chenmozhijin/turboacc/luci/add_turboacc.sh -o add_turboacc.sh && bash add_turboacc.sh --local-pkg $TURBOACC_PATH
               fi
               kernel_version="$(sed -n '/CONFIG_LINUX_/p' $OPENWRT_ROOT_PATH/.config | sed -e 's/CONFIG_LINUX_//' -e 's/=y//' -e 's/_/./g')"
-              #log
               echo "libnftnl-file"
               ls $OPENWRT_ROOT_PATH/package/libs/libnftnl
               echo "firewall4-file"
@@ -118,6 +117,14 @@ jobs:
               ls $OPENWRT_ROOT_PATH/target/linux/generic/hack-$kernel_version
               echo "pending-$kernel_version" 
               ls $OPENWRT_ROOT_PATH/target/linux/generic/pending-$kernel_version
+
+          # ---------- 新增步骤：刷新包索引 ----------
+          - name: 刷新包索引（使 turboacc 可被识别）
+            working-directory: ${{ env.OPENWRT_ROOT_PATH }}
+            run: |
+              make package/symlinks
+              make package/index
+          # -----------------------------------------
     
           - name: 加载配置并生成配置文件
             working-directory: ${{ env.OPENWRT_ROOT_PATH }}
@@ -172,27 +179,6 @@ jobs:
               find dl -size -1024c -exec ls -l {} \;
               find dl -size -1024c -exec rm -f {} \;
               make download -j16 || make download -j1 V=s
-    
-    #      - name: 下载工具链库
-    #        run: |
-    #          cd $OPENWRT_ROOT_PATH
-    #          mkdir -p staging_dir
-    #          CONFIG_TARGET_BOARD=$(sed -n 's/CONFIG_TARGET_BOARD="\(.*\)"/\1/p' .config) #x86
-    #          CONFIG_TARGET_SUBTARGET=$(sed -n 's/CONFIG_TARGET_SUBTARGET="\(.*\)"/\1/p' .config) #64
-    #          if [ "${{ matrix.tag_branche }}" = "master" ]; then
-    #            RELEASE=snapshots
-    #          elif [ "${{ matrix.tag_branche }}" = "openwrt-23.05" ] || [ "${{ matrix.tag_branche }}" = "v23.05.0" ]; then
-    #            RELEASE=releases/v23.05.0
-    #          elif [ "${{ matrix.tag_branche }}" = "openwrt-22.03" ] || [ "${{ matrix.tag_branche }}" = "v22.03.5" ]; then
-    #            RELEASE=releases/22.03.5
-    #          fi
-    #          FILE_NAME=$(curl -s -L --retry 3 --connect-timeout 20 https://downloads.openwrt.org/snapshots/targets/$CONFIG_TARGET_BOARD/$CONFIG_TARGET_SUBTARGET/ | grep -m 1 -o "openwrt-toolchain-${CONFIG_TARGET_BOARD}-${CONFIG_TARGET_SUBTARGET}_gcc[^\"]*\.Linux-${CONFIG_TARGET_BOARD}_${CONFIG_TARGET_SUBTARGET}\.tar\.xz" | sed 's/^.*<a href="//' | sort -u)
-    #          curl -L --retry 3 --connect-timeout 20 https://downloads.openwrt.org/$RELEASE/targets/$CONFIG_TARGET_BOARD/$CONFIG_TARGET_SUBTARGET/$FILE_NAME -o staging_dir/toolchain.tar.xz
-    #          cd staging_dir
-    #          tar xf toolchain.tar.xz
-    #          cp -r ./openwrt-toolchain-*/toolchain-* .
-    #          rm -rf ./openwrt-toolchain-*
-
     
           - name: 获取信息
             working-directory: ${{ env.OPENWRT_ROOT_PATH }}
@@ -261,35 +247,12 @@ jobs:
               du -h --max-depth=1 ./build_dir
               du -h --max-depth=1 ./bin
     
-          - name: 准备 artifact
-            working-directory: ${{ env.OPENWRT_ROOT_PATH }}
-            run: |
-              mkdir -p ./artifact
-              ls -la $(find ./bin/packages/ -type d)
-              cp -rf $(find ./bin/packages/ -type f \( -name "*.ipk" -o -name "*.apk" \)) ./artifact
-              cp -rf $(find ./bin/packages/ -type f \( -name "*.ipk" -o -name "*.apk" \)) ./artifact
-    
-          - name: 上传build artifacts
-            uses: actions/upload-artifact@v4
-            with:
-              name: packages-${{ matrix.tag_branche }}-${{ matrix.compile }}
-              path: ${{ env.OPENWRT_ROOT_PATH }}/artifact/**
-    
-          - name: 收集调试信息
-            if: always()
-            env:
-              JOB_STATUS: ${{ job.status }}
-              MATRIX_TAG_BRANCHE: ${{ matrix.tag_branche }}
-              MATRIX_COMPILE: ${{ matrix.compile }}
-              DEBUG_OUTPUT_PATH: ${{ github.workspace }}/openwrt-debug
-            run: |
-              bash "${{ github.workspace }}/luci-app-turboacc/.github/scripts/collect-openwrt-debug.sh"
-    
-          - name: 上传调试信息
-            if: always()
-            uses: actions/upload-artifact@v4
-            with:
-              name: debug-${{ matrix.tag_branche }}-${{ matrix.compile }}
-              path: ${{ github.workspace }}/openwrt-debug
-              if-no-files-found: warn
-              retention-days: 14
+         
+          # ---------- 以下为移除的调试信息上传步骤 ----------
+          # - name: 收集调试信息
+          #   if: always()
+          #   ...
+          # - name: 上传调试信息
+          #   if: always()
+          #   ...
+          # -------------------------------------------------
